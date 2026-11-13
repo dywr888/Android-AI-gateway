@@ -1,0 +1,101 @@
+name: 构建并发布 Release（tag 自动）
+run-name: 发布 ${{ github.ref_name }} · 自动构建签名与发布
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: release-tag
+  cancel-in-progress: false
+jobs:
+  release:
+    name: 构建与发布
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: '8.11.1'
+
+      - name: 还原 release keystore（若配置）
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
+            cat > keystore.properties <<EOF
+            storeFile=$GITHUB_WORKSPACE/release.keystore
+            storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+            keyAlias=${{ secrets.KEY_ALIAS }}
+            keyPassword=${{ secrets.KEY_PASSWORD }}
+            EOF
+            echo '使用仓库配置的发布签名' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '未配置签名密钥，自动使用 debug 签名构建（无需任何 secrets）' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: 单元测试
+        run: gradle :core:test --console=plain
+      - name: 打包 release
+        run: gradle :app:assembleRelease --console=plain
+
+      - name: 读取版本号
+        id: version
+        run: |
+          VERSION=$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"(.*)".*/\1/')
+          TAG=${GITHUB_REF_NAME#v}
+          if [ "$VERSION" != "$TAG" ]; then
+            echo "版本不一致：versionName=$VERSION 但 tag=v$TAG，中止"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "本次版本：$VERSION"
+
+      - name: 生成更新日志（仅应用相关变化）
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | grep -v "^v${{ steps.version.outputs.version }}$" | head -n1)
+          RANGE="HEAD"
+          [ -n "$PREV_TAG" ] && RANGE="$PREV_TAG..HEAD"
+          LOG=$(git log $RANGE --no-merges --invert-grep --grep='^chore(release)' --pretty='- %s' -- app core || true)
+          [ -n "$LOG" ] || LOG="- 无应用相关变化"
+          {
+            echo "body<<CHANGELOG_EOF"
+            echo "## 更新内容（${PREV_TAG:-首次发布} → v${{ steps.version.outputs.version }}）"
+            echo ""
+            echo "$LOG"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 重命名产物
+        run: cp app/build/outputs/apk/release/app-release.apk "ai-gateway-v${{ steps.version.outputs.version }}-release.apk"
+
+      - name: 验证签名并生成校验值
+        run: |
+          apk="ai-gateway-v${{ steps.version.outputs.version }}-release.apk"
+          ls -l "$apk"
+          sha256sum "$apk" | tee SHA256SUMS
+
+      - name: 创建 Release 并上传 APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: v${{ steps.version.outputs.version }}
+          body: ${{ steps.changelog.outputs.body }}
+          files: |
+            ai-gateway-v${{ steps.version.outputs.version }}-release.apk
+            SHA256SUMS
