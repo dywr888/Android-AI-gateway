@@ -100,7 +100,9 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // 无 keystore.properties 时回退到 debug 签名，保证任何环境都能出可安装 release 包。
             if (hasReleaseKeystore) signingConfig = signingConfigs.getByName("release")
+            else signingConfig = signingConfigs.getByName("debug")
         }
     }
 
