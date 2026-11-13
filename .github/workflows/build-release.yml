@@ -27,11 +27,22 @@ jobs:
         with:
           gradle-version: '8.11.1'
 
-      - name: 还原 release keystore
+      - name: 还原 release keystore（若配置）
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-        run: echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
-
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
+            cat > keystore.properties <<EOF
+            storeFile=$GITHUB_WORKSPACE/release.keystore
+            storePassword=${{ secrets.KEYSTORE_PASSWORD }}
+            keyAlias=${{ secrets.KEY_ALIAS }}
+            keyPassword=${{ secrets.KEY_PASSWORD }}
+            EOF
+            echo '使用仓库配置的发布签名' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '未配置签名密钥，自动使用 debug 签名构建（无需任何 secrets）' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: 生成 keystore.properties
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
