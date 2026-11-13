@@ -33,18 +33,16 @@ jobs:
       - name: 还原 release keystore（若配置）
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         shell: bash
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
-            printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
-            printf 'storeFile=%s
-storePassword=%s
-keyAlias=%s
-keyPassword=%s
-'               "$GITHUB_WORKSPACE/release.keystore" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
+            echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
+            {
+              echo "storeFile=$GITHUB_WORKSPACE/release.keystore"
+              echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
+              echo "keyAlias=${{ secrets.KEY_ALIAS }}"
+              echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
+            } > keystore.properties
             echo '使用仓库配置的发布签名' >> "$GITHUB_STEP_SUMMARY"
           else
             echo '未配置签名密钥，自动使用 debug 签名构建（无需任何 secrets）' >> "$GITHUB_STEP_SUMMARY"
