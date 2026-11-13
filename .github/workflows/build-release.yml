@@ -1,67 +1,57 @@
 name: Build Release APK
-
 # 仅构建、不发版：手动触发，跑测试 + 打 release 包，产物以 artifact 形式保留。
-# 用于实机测试 release 包；需要正式发版时用 android-release.yml（会创建 Release 与 tag）。
+# 用于实机测试 release 包；需要正式发版时用 android-release.yml 或 tag-release.yml。
 on:
   workflow_dispatch:
-
 permissions:
   contents: read
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
-
       - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-36 build-tools;35.0.0'
-
       - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.11.1'
-
       - name: 还原 release keystore（若配置）
-          env:
-            KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
-            KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-            KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-            KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          shell: bash
-          run: |
-            if [ -n "$KEYSTORE_BASE64" ]; then
-              printf '%s' "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
-              printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \\
-                "$GITHUB_WORKSPACE/release.keystore" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD" > keystore.properties
-              echo '使用仓库配置的发布签名' >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo '未配置签名密钥，自动使用 debug 签名构建（无需任何 secrets）' >> "$GITHUB_STEP_SUMMARY"
-            fi
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
+            {
+              echo "storeFile=$GITHUB_WORKSPACE/release.keystore"
+              echo "storePassword=${{ secrets.KEYSTORE_PASSWORD }}"
+              echo "keyAlias=${{ secrets.KEY_ALIAS }}"
+              echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
+            } > keystore.properties
+            echo '使用仓库配置的发布签名' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo '未配置签名密钥，自动使用 debug 签名构建（无需任何 secrets）' >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: 单元测试
         run: gradle :core:test --console=plain
-
       - name: 打包 release
         run: gradle :app:assembleRelease --console=plain
-
       - name: 读取版本号
         id: version
         run: |
           VERSION=$(grep -m1 'versionName' app/build.gradle.kts | sed -E 's/.*"(.*)".*/\1/')
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "本次版本：$VERSION"
-
       - name: 重命名产物
-        run: cp app/build/outputs/apk/release/app-release.apk "ai-gateway-${{ steps.version.outputs.version }}-release.apk"
-
+        run: cp app/build/outputs/apk/release/app-release.apk "ai-gateway-v${{ steps.version.outputs.version }}-release.apk"
       - name: 上传 APK（artifact，不创建 Release）
         uses: actions/upload-artifact@v4
         with:
-          name: ai-gateway-${{ steps.version.outputs.version }}-release
-          path: ai-gateway-${{ steps.version.outputs.version }}-release.apk
+          name: ai-gateway-v${{ steps.version.outputs.version }}-release
+          path: ai-gateway-v${{ steps.version.outputs.version }}-release.apk
           retention-days: 14
